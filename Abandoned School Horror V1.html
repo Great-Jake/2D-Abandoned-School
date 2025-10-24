@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>2D Abandoned School</title>
+<style>
+body{margin:0;font-family:sans-serif;overflow:hidden;color:white;text-align:center;}
+#menu{position:absolute;top:0;left:0;width:100%;height:100%;background:linear-gradient(to bottom,#87ceeb,#00aaff);display:flex;flex-direction:column;justify-content:center;align-items:center;}
+#menu h1{font-size:50px;text-shadow:2px 2px 5px black;}
+#menu p{font-size:24px;margin:20px 0;text-shadow:1px 1px 3px black;}
+button{padding:10px 20px;margin:8px;font-size:18px;border:none;border-radius:8px;background:#fff;color:#000;font-weight:bold;cursor:pointer;transition:0.2s;}
+button:hover{background:#ffd700;color:#000;transform:scale(1.05);}
+#gameCanvas{display:none;position:absolute;top:0;left:0;width:100vw;height:100vh;background:#000;}
+#info{position:absolute;top:10px;left:10px;font-size:18px;}
+#levelText{position:absolute;top:10px;right:10px;font-size:18px;}
+#timerText{position:absolute;top:40px;right:10px;font-size:18px;}
+#pauseMenu,#gameOverMenu{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.9);padding:20px;border:2px solid white;display:none;text-align:center;}
+#jumpScare{position:absolute;top:0;left:0;width:100%;height:100%;display:none;align-items:center;justify-content:center;background:black;}
+#jumpScare img{width:100%;height:100%;object-fit:cover;}
+</style>
+</head>
+<body>
+<div id="menu">
+  <h1>2D Abandoned Horror</h1>
+  <p>Select difficulty:</p>
+  <button id="easyBtn">Easy</button>
+  <button id="normalBtn">Normal</button>
+  <button id="hardBtn">Hard</button>
+  <button id="ghostBtn">Ghost Mode</button>
+  <button id="impossibleBtn">Impossible</button>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+<div id="info"></div>
+<div id="levelText"></div>
+<div id="timerText"></div>
+
+<div id="pauseMenu">
+  <h2>Paused</h2>
+  <button id="resumeBtn">Resume</button>
+  <button id="homeBtn">Homepage</button>
+</div>
+
+<div id="gameOverMenu">
+  <h2 id="goText">Game Over</h2>
+  <button id="retryBtn">Try Again</button>
+  <button id="homeBtn2">Homepage</button>
+</div>
+
+<div id="jumpScare"><img src="https://iili.io/KUvDvAN.gif" alt="Jump Scare"></div>
+
+<!-- optional ambience -->
+<audio id="cafBuzz" loop src="https://cdn.pixabay.com/audio/2022/03/15/audio_buzzing-light-ambient-11257.mp3"></audio>
+
+<script>
+/* Game variables */
+const c = document.getElementById('gameCanvas'), ctx = c.getContext('2d');
+const info = document.getElementById('info'), levelText = document.getElementById('levelText'), timerText = document.getElementById('timerText');
+const pauseMenu = document.getElementById('pauseMenu'), gameOverMenu = document.getElementById('gameOverMenu');
+const goText = document.getElementById('goText'), jumpScare = document.getElementById('jumpScare'), cafBuzz = document.getElementById('cafBuzz');
+
+let p = {x:50, y:50, s:20}; // player
+let m = null;               // single active monster or null (per level)
+let monsters = [];          // used for level 5 (multiple monsters)
+let a = [], o = [], papers = []; // apples/collectables, objects, papers
+let k = {}, ms = 1, col = 0;
+let run = false, paused = false, d = 'normal', ghost = false, flash = false;
+let level = 1;
+let level5Timer = 30, level5Start = 0, level5Active = false;
+
+/* resize canvas */
+function resizeCanvas(){ c.width = window.innerWidth; c.height = window.innerHeight; }
+window.addEventListener('resize', resizeCanvas); resizeCanvas();
+
+/* helper */
+function rect(x,y,w,h,r){ return !(r.x > x+w || r.x + r.w < x || r.y > y+h || r.y + r.h < y); }
+
+/* start / menu */
+function startGame(mode){
+  document.getElementById('menu').style.display='none';
+  c.style.display='block';
+  info.style.display='block';
+  levelText.style.display='block';
+  timerText.style.display='block';
+  d = mode;
+  ghost = (mode === 'ghost');
+  flash = (mode === 'impossible');
+  ms = mode==='easy'?0.5:mode==='normal'?1.2:mode==='hard'?2:mode==='impossible'?2.5:1;
+  p.x = 50; p.y = 50; col = 0;
+  setupLevel(level);
+  updateInfo();
+  run = true;
+  requestAnimationFrame(loop);
+}
+function restartGame(){ gameOverMenu.style.display='none'; level=1; startGame(d); }
+function goHome(){ gameOverMenu.style.display='none'; c.style.display='none'; info.style.display='none'; levelText.style.display='none'; timerText.style.display='none'; document.getElementById('menu').style.display='flex'; level=1; try{ cafBuzz.pause(); cafBuzz.currentTime=0; }catch(e){} }
+
+/* keyboard */
+document.addEventListener('keydown', e=>{ k[e.key]=true; if(e.key==='Escape') togglePause(); });
+document.addEventListener('keyup', e=>{ k[e.key]=false; });
+
+/* buttons */
+document.getElementById('easyBtn').addEventListener('click', ()=>{ level=1; startGame('easy'); });
+document.getElementById('normalBtn').addEventListener('click', ()=>{ level=1; startGame('normal'); });
+document.getElementById('hardBtn').addEventListener('click', ()=>{ level=1; startGame('hard'); });
+document.getElementById('ghostBtn').addEventListener('click', ()=>{ level=1; startGame('ghost'); });
+document.getElementById('impossibleBtn').addEventListener('click', ()=>{ level=1; startGame('impossible'); });
+document.getElementById('resumeBtn').addEventListener('click', resumeGame);
+document.getElementById('homeBtn').addEventListener('click', goHome);
+document.getElementById('retryBtn').addEventListener('click', ()=>restartGame());
+document.getElementById('homeBtn2').addEventListener('click', goHome);
+
+function resumeGame(){ paused=false; pauseMenu.style.display='none'; requestAnimationFrame(loop); }
+function togglePause(){ paused=!paused; pauseMenu.style.display = paused ? 'block' : 'none'; if(!paused) requestAnimationFrame(loop); }
+
+function updateInfo(){ info.textContent = `Collected: ${col}/${col + a.length}`; }
+
+/* ---------- Set up levels ---------- */
+function setupLevel(l){
+  o = []; papers = []; a = []; m = null; monsters = []; level5Active=false;
+  // Level 1 - Abandoned Classroom (apples)
+  if(l===1){
+    levelText.textContent = 'Level 1: Abandoned Classroom';
+    // walls
+    o.push({x:0,y:0,w:c.width,h:10});
+    o.push({x:0,y:0,w:10,h:c.height});
+    o.push({x:c.width-10,y:0,w:10,h:c.height});
+    o.push({x:0,y:c.height-10,w:c.width,h:10});
+    o.push({x:c.width/2-150,y:30,w:300,h:20,board:true});
+    let rows=3, cols=4;
+    for(let i=0;i<rows;i++){
+      for(let j=0;j<cols;j++){
+        let x=100+j*200, y=120+i*180;
+        o.push({x:x,y:y,w:60,h:30,crack:true,collide:true});
+        o.push({x:x+5,y:y-10,w:15,h:15,chair:true,collide:true});
+      }
+    }
+    // blood + skull (decor)
+    for(let i=0;i<6;i++) o.push({x:Math.random()*(c.width-20), y:Math.random()*(c.height-20), w:15,h:15, blood:true, collide:false});
+    for(let i=0;i<3;i++) o.push({x:Math.random()*(c.width-20), y:Math.random()*(c.height-20), w:12,h:12, skull:true, collide:false});
+    for(let i=0;i<4;i++) o.push({x:Math.random()*(c.width-50), y:Math.random()*(c.height-50), w:30,h:5, poster:true, collide:false});
+    for(let i=0;i<10;i++) papers.push({x:Math.random()*c.width, y:Math.random()*c.height, vx:(Math.random()-0.5)*2, vy:(Math.random()-0.5)*2});
+    // apples to collect
+    let ac = ghost?3:(d==='easy'?3:d==='normal'?5:d==='hard'?7:5);
+    for(let i=0;i<ac;i++){
+      let placed=false;
+      while(!placed){
+        let x=Math.random()*(c.width-40)+20, y=Math.random()*(c.height-40)+20;
+        if(!o.some(z=>z.collide!==false && rect(x,y,15,15,z))){
+          a.push({x:x,y:y,s:15,apple:true});
+          placed=true;
+        }
+      }
+    }
+    m = {x:c.width-100,y:c.height-100,s:25,type:'red',jump:'https://iili.io/KUvDvAN.gif'};
+    try{ cafBuzz.pause(); cafBuzz.currentTime=0; }catch(e){}
+  }
+
+  // Level 2 - Abandoned Playground (oranges)
+  else if(l===2){
+    levelText.textContent = 'Level 2: Abandoned Playground';
+    p.x=50; p.y=50;
+    o.push({x:0,y:0,w:c.width,h:10});
+    o.push({x:0,y:0,w:10,h:c.height});
+    o.push({x:c.width-10,y:0,w:10,h:c.height});
+    o.push({x:0,y:c.height-10,w:c.width,h:10});
+    let rows=2, cols=3;
+    for(let i=0;i<rows;i++){
+      for(let j=0;j<cols;j++){
+        let x=150+j*250, y=150+i*250;
+        o.push({x:x,y:y,w:60,h:30,crack:true,collide:true});
+      }
+    }
+    // playground decorations images
+    for(let i=0;i<2;i++){
+      o.push({img:'https://iili.io/KgJZhFI.png', x:100+i*400, y:200, w:80, h:80, collide:false});
+      o.push({img:'https://iili.io/KgJbs9t.png', x:150+i*400, y:350, w:80, h:80, collide:false});
+      o.push({img:'https://iili.io/Kgd9xUl.png', x:250+i*300, y:250, w:50, h:50, collide:false});
+    }
+    for(let i=0;i<8;i++) papers.push({x:Math.random()*c.width, y:Math.random()*c.height, vx:(Math.random()-0.5)*2, vy:(Math.random()-0.5)*2});
+    let ac = ghost?3:(d==='easy'?3:d==='normal'?5:d==='hard'?7:5);
+    for(let i=0;i<ac;i++){
+      let placed=false;
+      while(!placed){
+        let x=Math.random()*(c.width-40)+20, y=Math.random()*(c.height-40)+20;
+        if(!o.some(z=>z.collide!==false && rect(x,y,15,15,z))){
+          a.push({x:x,y:y,s:15,orange:true}); placed=true;
+        }
+      }
+    }
+    m = {x:c.width-120,y:c.height-120,s:25,type:'blue',jump:'https://iili.io/Kg9RRhG.webp'};
+    try{ cafBuzz.pause(); cafBuzz.currentTime=0; }catch(e){}
+  }
+
+  // Level 3 - Cafeteria (lemons) - tables are collidable now
+  else if(l===3){
+    levelText.textContent = 'Level 3: Abandoned Cafeteria';
+    p.x = 80; p.y = 80;
+    // floor tiles drawn during draw
+    let tblCols = Math.max(2, Math.floor(c.width/300));
+    for(let r=0;r<3;r++){
+      for(let ci=0;ci<tblCols;ci++){
+        let tx = 80 + ci * 300;
+        let ty = 100 + r * 150;
+        o.push({x:tx,y:ty,w:140,h:40,table:true,collide:true});
+      }
+    }
+    // food debris (non-collidable) + bottles
+    for(let i=0;i<12;i++) o.push({x:50+Math.random()*(c.width-100), y:120+Math.random()*(c.height-200), w:6, h:6, food:true, collide:false});
+    o.push({x:150,y:c.height-150,w:10,h:25,ketchup:true,collide:false});
+    o.push({x:220,y:c.height-160,w:10,h:25,ketchup:true,collide:false});
+    o.push({x:c.width-260,y:c.height-150,w:10,h:25,mustard:true,collide:false});
+    o.push({x:c.width-190,y:c.height-160,w:10,h:25,mustard:true,collide:false});
+    // lemons
+    let lemons = 8;
+    for(let i=0;i<lemons;i++){
+      let placed=false, attempts=0;
+      while(!placed && attempts<300){
+        attempts++;
+        let lx = 60 + Math.random()*(c.width-120);
+        let ly = 120 + Math.random()*(c.height-200);
+        if(!o.some(t=>t.table && lx>t.x-10 && lx<t.x+t.w+10 && ly>t.y-10 && ly<t.y+t.h+10)){
+          a.push({x:lx,y:ly,s:15,lemon:true}); placed=true;
+        }
+      }
+    }
+    m = {x:c.width-140,y:c.height-140,s:30,type:'limechef',chef:true,jump:'https://iili.io/KgCa0js.webp',spotted:false,patrolOffset:Math.random()*1000};
+    try{ cafBuzz.volume = 0.25; cafBuzz.currentTime = 0; cafBuzz.play(); }catch(e){}
+  }
+
+  // Level 4 - Abandoned Basketball Court (apples) - red monster (like level1 style)
+  else if(l===4){
+    levelText.textContent = 'Level 4: Abandoned Basketball Court';
+    p.x = 60; p.y = 60;
+    // court boundaries
+    o.push({x:0,y:0,w:c.width,h:10,collide:true});
+    o.push({x:0,y:0,w:10,h:c.height,collide:true});
+    o.push({x:c.width-10,y:0,w:10,h:c.height,collide:true});
+    o.push({x:0,y:c.height-10,w:c.width,h:10,collide:true});
+    // basketball court lines / hoop drawn in drawRoom
+    // decorative walk-through basketballs
+    for(let i=0;i<10;i++){
+      o.push({x:50 + Math.random()*(c.width-100), y:100 + Math.random()*(c.height-200), w:18, h:18, ball:true, collide:false});
+    }
+    // apples to collect (apples like level1)
+    let ac = ghost?3:(d==='easy'?3:d==='normal'?5:d==='hard'?7:5);
+    for(let i=0;i<ac;i++){
+      let placed=false;
+      while(!placed){
+        let x=Math.random()*(c.width-40)+20, y=Math.random()*(c.height-40)+20;
+        // avoid immediate walls
+        if(!o.some(z=>z.collide!==false && rect(x,y,15,15,z))){
+          a.push({x:x,y:y,s:15,apple:true});
+          placed=true;
+        }
+      }
+    }
+    // red monster like L1
+    m = {x: c.width-120, y: c.height-120, s:25, type:'red', jump:'https://iili.io/Kg0jkX4.webp'};
+    try{ cafBuzz.pause(); cafBuzz.currentTime=0; }catch(e){}
+  }
+
+  // Level 5 - Abandoned Field (timer-based win 30s) - three monsters present
+  else if(l===5){
+    levelText.textContent = 'Level 5: Abandoned School Field';
+    p.x = 80; p.y = 80;
+    // field bounds
+    o.push({x:0,y:0,w:c.width,h:10,collide:true});
+    o.push({x:0,y:0,w:10,h:c.height,collide:true});
+    o.push({x:c.width-10,y:0,w:10,h:c.height,collide:true});
+    o.push({x:0,y:c.height-10,w:c.width,h:10,collide:true});
+    // L shape table + chairs + books (as rect obstacles/collidable)
+    o.push({x: c.width/2 - 160, y: c.height/2 - 40, w: 120, h: 50, table:true, collide:true});
+    o.push({x: c.width/2 - 40, y: c.height/2 - 40, w: 50, h: 120, table:true, collide:true});
+    o.push({x: c.width/2 - 170, y: c.height/2 + 14, w: 28, h: 28, chair:true, collide:true});
+    o.push({x: c.width/2 - 60, y: c.height/2 + 14, w: 28, h: 28, chair:true, collide:true});
+    o.push({x: c.width/2 + 20, y: c.height/2 + 14, w: 28, h: 28, chair:true, collide:true});
+    // books scattered (non-collidable)
+    for(let i=0;i<25;i++) o.push({x:50+Math.random()*(c.width-100), y:120+Math.random()*(c.height-200), w:8,h:6,book:true,collide:false});
+    // flying papers
+    for(let i=0;i<18;i++) papers.push({x:Math.random()*c.width, y:Math.random()*c.height, vx:(Math.random()-0.5)*3, vy:(Math.random()-0.5)*3});
+    // mixed fruits (apples, oranges, lemons) decorative - they do not affect win (timer does)
+    for(let i=0;i<10;i++){
+      let kind = ['apple','orange','lemon'][Math.floor(Math.random()*3)];
+      a.push({x:40+Math.random()*(c.width-80), y:120+Math.random()*(c.height-200), s:15, [kind]:true});
+    }
+    // three monsters: red, blue, limechef
+    monsters = [
+      {x: c.width-160, y: c.height-160, s:25, type:'red', jump:'https://iili.io/KUvDvAN.gif', active:true},
+      {x: 120, y: c.height-160, s:25, type:'blue', jump:'https://iili.io/Kg9RRhG.webp', active:true},
+      {x: c.width/2, y: c.height-120, s:30, type:'limechef', chef:true, jump:'https://iili.io/KgCa0js.webp', spotted:false, patrolOffset:Math.random()*1000, active:true}
+    ];
+    level5Timer = 30; level5Start = Date.now(); level5Active = true;
+    try{ cafBuzz.volume = 0.2; cafBuzz.currentTime = 0; cafBuzz.play(); }catch(e){}
+  }
+
+  updateInfo();
+}
+
+/* ---------- Drawing ---------- */
+function drawRoom(){
+  // backgrounds:
+  if(level===3){
+    // cafeteria tile pattern
+    ctx.fillStyle='#bdbdbd'; ctx.fillRect(0,0,c.width,c.height);
+    let tile = 40; ctx.strokeStyle='#a9a9a9'; ctx.lineWidth=1;
+    for(let x=0;x<c.width;x+=tile) for(let y=0;y<c.height;y+=tile) ctx.strokeRect(x,y,tile,tile);
+  } else if(level===4){
+    // night-time basketball court-ish dark green/gray
+    ctx.fillStyle='#0f1720'; ctx.fillRect(0,0,c.width,c.height);
+    // court center circle
+    ctx.strokeStyle='#444'; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.arc(c.width/2, c.height/2, 120, 0, Math.PI*2); ctx.stroke();
+    // hoop (left and right)
+    ctx.fillStyle='#332211'; ctx.fillRect(c.width-140, 80, 6, 40); // hoop pole
+    ctx.beginPath(); ctx.strokeStyle='#c9a34a'; ctx.lineWidth=4; ctx.arc(c.width-125, 90, 18, 0, Math.PI); ctx.stroke();
+    // running lines
+    ctx.strokeStyle='#2a2a2a'; ctx.lineWidth=1;
+    for(let y=60;y<c.height;y+=30){ ctx.beginPath(); ctx.moveTo(20,y); ctx.lineTo(c.width-20,y); ctx.stroke(); }
+  } else if(level===5){
+    // field: dark grassy night
+    ctx.fillStyle='#07130a'; ctx.fillRect(0,0,c.width,c.height);
+    // faint grid
+    ctx.strokeStyle='rgba(255,255,255,0.03)'; for(let x=0;x<c.width;x+=50) ctx.beginPath(), ctx.moveTo(x,0), ctx.lineTo(x,c.height), ctx.stroke();
+  } else {
+    ctx.fillStyle = level===2 ? '#006400' : '#111'; ctx.fillRect(0,0,c.width,c.height);
+  }
+
+  // draw objects
+  o.forEach(obj=>{
+    if(obj.table){
+      ctx.fillStyle = '#553322'; ctx.fillRect(obj.x,obj.y,obj.w,obj.h);
+      ctx.fillStyle='#333'; ctx.fillRect(obj.x+8, obj.y+obj.h, 8, 12); ctx.fillRect(obj.x+obj.w-16, obj.y+obj.h, 8, 12);
+    } else if(obj.chair){
+      ctx.fillStyle='#333'; ctx.fillRect(obj.x,obj.y,obj.w,obj.h);
+    } else if(obj.food){
+      ctx.fillStyle='#d2691e'; ctx.fillRect(obj.x,obj.y,obj.w,obj.h);
+    } else if(obj.ketchup){
+      ctx.fillStyle='red'; ctx.fillRect(obj.x,obj.y,obj.w,obj.h);
+    } else if(obj.mustard){
+      ctx.fillStyle='yellow'; ctx.fillRect(obj.x,obj.y,obj.w,obj.h);
+    } else if(obj.ball){
+      ctx.fillStyle='orange'; ctx.beginPath(); ctx.arc(obj.x+obj.w/2, obj.y+obj.h/2, obj.w/2, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle='black'; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(obj.x+obj.w/2, obj.y+obj.h/2, obj.w/2-2, 0, Math.PI*2); ctx.stroke();
+    } else if(obj.book){
+      ctx.fillStyle='#6b8e23'; ctx.fillRect(obj.x,obj.y,obj.w,obj.h);
+    } else if(obj.img){
+      let im=new Image(); im.src=obj.img; ctx.drawImage(im,obj.x,obj.y,obj.w,obj.h);
+    } else if(obj.poster){
+      ctx.fillStyle='darkred'; ctx.fillRect(obj.x,obj.y,obj.w,obj.h);
+    } else if(obj.crack){
+      ctx.fillStyle='#554433'; ctx.fillRect(obj.x,obj.y,obj.w,obj.h);
+      ctx.strokeStyle='#222'; ctx.beginPath(); ctx.moveTo(obj.x,obj.y+2); ctx.lineTo(obj.x+obj.w,obj.y+4); ctx.stroke();
+    } else if(obj.skull){
+      ctx.fillStyle='white'; ctx.fillRect(obj.x,obj.y,obj.w,obj.h);
+      // small skull eyes
+      ctx.fillStyle='black'; ctx.fillRect(obj.x+2,obj.y+2,3,3);
+    } else if(obj.blood){
+      ctx.fillStyle='darkred'; ctx.beginPath(); ctx.moveTo(obj.x+obj.w/2,obj.y); ctx.lineTo(obj.x+obj.w, obj.y); ctx.lineTo(obj.x+obj.w/2, obj.y+obj.h); ctx.closePath(); ctx.fill();
+    } else {
+      ctx.fillStyle = '#554433'; ctx.fillRect(obj.x,obj.y,obj.w,obj.h);
+    }
+  });
+}
+
+/* draw player */
+function drawPlayer(){ ctx.fillStyle='blue'; ctx.fillRect(p.x,p.y,p.s,p.s); }
+
+/* draw original monster (red/blue) - keep same face style as original */
+function drawSingleMonster(mm){
+  if(!mm) return;
+  let jx=(Math.random()-0.5)*3, jy=(Math.random()-0.5)*3;
+  let dx = p.x - mm.x, dy = p.y - mm.y;
+  let dist = Math.sqrt(dx*dx + dy*dy);
+  let scale = 1 + Math.min(0.5, 0.5*(100/(dist+1)));
+  mm.s = (mm.s || 25) * (mm.type==='chef'?1:1) ; // chef handled elsewhere
+  ctx.fillStyle = (mm.type==='blue' ? 'darkblue' : 'darkred');
+  ctx.beginPath();
+  ctx.ellipse(mm.x + (mm.s||25)/2 + jx, mm.y + (mm.s||25)/2 + jy, (mm.s||25)/2 + Math.random()*5, (mm.s||25)/2 + Math.random()*10, Math.random()*Math.PI, 0, Math.PI*2);
+  ctx.fill();
+  // eyes
+  ctx.fillStyle = (mm.type==='blue' ? 'blue' : 'red');
+  ctx.beginPath(); ctx.arc(mm.x + 5 + dx/20 + jx, mm.y + 10 + dy/20 + jy, 5, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(mm.x + (mm.s||25) - 10 + dx/20 + jx, mm.y + 10 + dy/20 + jy, 5, 0, Math.PI*2); ctx.fill();
+  // teeth lines
+  ctx.strokeStyle='white'; ctx.lineWidth=2; ctx.beginPath();
+  let y0 = mm.y + (mm.s||25) - 10 + jy;
+  for(let i=0;i<(mm.s||25)-10;i+=5){
+    let y = y0 + (i%10===0 ? -3 : 3);
+    ctx.lineTo(mm.x + 5 + i, y);
+  }
+  ctx.stroke();
+}
+
+/* draw chef monster (lime with hat) - keep scary face */
+function drawChefMonster(mm){
+  if(!mm) return;
+  // body
+  ctx.fillStyle = 'limegreen';
+  ctx.beginPath();
+  ctx.ellipse(mm.x, mm.y, mm.s, mm.s*1.05, 0, 0, Math.PI*2);
+  ctx.fill();
+  // eyes
+  ctx.fillStyle='black';
+  ctx.beginPath(); ctx.arc(mm.x - mm.s*0.35, mm.y - mm.s*0.2, mm.s*0.22, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(mm.x + mm.s*0.35, mm.y - mm.s*0.2, mm.s*0.22, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle='white';
+  ctx.beginPath(); ctx.arc(mm.x - mm.s*0.35, mm.y - mm.s*0.2, mm.s*0.08, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(mm.x + mm.s*0.35, mm.y - mm.s*0.2, mm.s*0.08, 0, Math.PI*2); ctx.fill();
+  // mouth with jagged teeth
+  ctx.strokeStyle='black'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(mm.x - mm.s*0.6, mm.y + mm.s*0.2);
+  for(let i=-6;i<=6;i++){
+    let tx = mm.x + i*(mm.s*0.06);
+    let ty = mm.y + mm.s*0.25 + ((i%2===0)? -mm.s*0.05 : mm.s*0.05);
+    ctx.lineTo(tx, ty);
+  }
+  ctx.stroke();
+  // hat
+  ctx.fillStyle='white';
+  ctx.fillRect(mm.x - mm.s*0.6, mm.y - mm.s - 10, mm.s*1.2, 8);
+  ctx.beginPath(); ctx.ellipse(mm.x, mm.y - mm.s - 12, mm.s*0.5, mm.s*0.25, 0, 0, Math.PI*2); ctx.fill();
+  // exclamation when spotted
+  if(mm.spotted){
+    ctx.fillStyle='red';
+    ctx.font = `${Math.max(18, mm.s)}px Arial`;
+    ctx.fillText('❗', mm.x + mm.s*0.6, mm.y - mm.s - 6);
+  }
+}
+
+/* draw all monsters for level5 or single m for other levels */
+function drawMonsters(){
+  if(level===5){
+    monsters.forEach(mm=>{
+      if(!mm.active) return;
+      if(mm.chef) drawChefMonster(mm);
+      else drawSingleMonster(mm);
+    });
+  } else {
+    if(!m) return;
+    if(m.chef) drawChefMonster(m);
+    else drawSingleMonster(m);
+  }
+}
+
+/* draw fruits / apples */
+function drawApples(){
+  a.forEach(x=>{
+    if(x.lemon){
+      ctx.fillStyle='yellow'; ctx.beginPath(); ctx.arc(x.x, x.y, x.s/2, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle='green'; ctx.fillRect(x.x + x.s/2 - 3, x.y - 6, 4, 4);
+    } else if(x.orange){
+      ctx.fillStyle='orange'; ctx.beginPath(); ctx.arc(x.x + x.s/2, x.y + x.s/2, x.s/2, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle='green'; ctx.beginPath(); ctx.moveTo(x.x + x.s/2, x.y - 2); ctx.lineTo(x.x + x.s/2 - 3, x.y - 8); ctx.lineTo(x.x + x.s/2 + 3, x.y - 8); ctx.closePath(); ctx.fill();
+    } else if(x.apple){
+      ctx.fillStyle='red'; ctx.beginPath(); ctx.arc(x.x + x.s/2, x.y + x.s/2, x.s/2, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle='green'; ctx.beginPath(); ctx.moveTo(x.x + x.s/2, x.y - 2); ctx.lineTo(x.x + x.s/2 - 3, x.y - 8); ctx.lineTo(x.x + x.s/2 + 3, x.y - 8); ctx.closePath(); ctx.fill();
+    } else {
+      // generic
+      ctx.fillStyle='gray'; ctx.fillRect(x.x,x.y,x.s,x.s);
+    }
+  });
+}
+
+/* papers movement */
+function drawPapers(){ papers.forEach(pap=>{ pap.x += pap.vx; pap.y += pap.vy; if(pap.x<0||pap.x>c.width) pap.vx *= -1; if(pap.y<0||pap.y>c.height) pap.vy *= -1; ctx.fillStyle='white'; ctx.fillRect(pap.x,pap.y,5,3); }); }
+
+/* ---------- Movement ---------- */
+function movePlayer(){
+  let s = 3, newX = p.x, newY = p.y;
+  if(k['ArrowUp']||k['w']) newY -= s;
+  if(k['ArrowDown']||k['s']) newY += s;
+  if(k['ArrowLeft']||k['a']) newX -= s;
+  if(k['ArrowRight']||k['d']) newX += s;
+  if(level===2) s /= 1.5; // playground speed tweak
+  if(ghost || flash){
+    p.x = newX; p.y = newY;
+  } else {
+    let pr = {x:newX, y:newY, width:p.s, height:p.s};
+    // block movement if colliding with any object that has collide!==false
+    if(!o.some(z=>z.collide!==false && rect(pr.x,pr.y,pr.width,pr.height,z))){
+      p.x = newX; p.y = newY;
+    }
+  }
+}
+
+/* monster movement */
+function moveMonsters(){
+  if(level===5){
+    monsters.forEach(mm=>{
+      if(!mm.active) return;
+      if(ghost) return;
+      let dx = p.x - mm.x, dy = p.y - mm.y;
+      let dist = Math.sqrt(dx*dx + dy*dy);
+      if(mm.chef){
+        // roam until spotted
+        if(!mm.spotted){
+          let detect = 250;
+          if(dist < detect) mm.spotted = true;
+          else { mm.x += Math.cos((Date.now()+mm.patrolOffset)/1200)*0.3; mm.y += Math.sin((Date.now()+mm.patrolOffset)/1000)*0.3; }
+        } else {
+          let speed = (d==='easy'?0.8:(d==='normal'?1.5:(d==='hard'?2.2:2.8)));
+          if(dist>0){ mm.x += dx/dist * speed; mm.y += dy/dist * speed; }
+        }
+      } else {
+        // original chase behavior (same as earlier)
+        if(dist>0){ mm.x += dx/dist * ms; mm.y += dy/dist * ms; }
+      }
+    });
+  } else {
+    if(!m || ghost) return;
+    let dx = p.x - m.x, dy = p.y - m.y; let dist = Math.sqrt(dx*dx + dy*dy);
+    if(dist>0) m.x += dx/dist * ms, m.y += dy/dist * ms;
+  }
+}
+
+/* ---------- End / Win ---------- */
+function showJumpAndGameOver(imgUrl){
+  run=false;
+  try{ cafBuzz.pause(); }catch(e){}
+  if(imgUrl){
+    jumpScare.style.display='flex';
+    jumpScare.querySelector('img').src = imgUrl;
+  } else {
+    jumpScare.style.display='flex';
+    jumpScare.querySelector('img').src = 'https://iili.io/KUvDvAN.gif';
+  }
+  setTimeout(()=>{
+    jumpScare.style.display='none';
+    gameOverMenu.style.display='block';
+    goText.textContent='You Lost!';
+    // special behavior for level2: show restart level1 option (kept same as before)
+    if(level===2){
+      gameOverMenu.innerHTML = `<h2>You Lost!</h2><button onclick="restartGame()">Restart Level 1</button><button onclick="goHome()">Homepage</button>`;
+    }
+  },800);
+}
+
+function endGameWin(){
+  // progress: 1->2->3->4->5 -> end
+  if(level===1){ level=2; setupLevel(2); updateInfo(); run=true; requestAnimationFrame(loop); }
+  else if(level===2){ level=3; setupLevel(3); updateInfo(); run=true; requestAnimationFrame(loop); }
+  else if(level===3){ level=4; setupLevel(4); updateInfo(); run=true; requestAnimationFrame(loop); }
+  else if(level===4){ level=5; setupLevel(5); updateInfo(); run=true; requestAnimationFrame(loop); }
+  else { gameOverMenu.style.display='block'; goText.textContent='You Win!'; }
+}
+
+/* ---------- Main Loop ---------- */
+function loop(){
+  if(!run || paused) return;
+  ctx.clearRect(0,0,c.width,c.height);
+
+  // move / update
+  movePlayer();
+  moveMonsters();
+
+  // draw
+  drawRoom();
+  drawPapers();
+  drawApples();
+  drawPlayer();
+  drawMonsters();
+
+  // darkness overlay for non-ghost
+  if(flash) drawFlash();
+  else if(d!=='ghost'){ ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.fillRect(0,0,c.width,c.height); }
+
+  // monster collisions:
+  if(level===5){
+    // check each active monster
+    for(let mm of monsters){
+      if(!mm.active) continue;
+      let dx = p.x - mm.x, dy = p.y - mm.y, dist = Math.sqrt(dx*dx + dy*dy);
+      if(dist < (p.s + mm.s)/2){
+        // show specific jump for that monster
+        showJumpAndGameOver(mm.jump || 'https://iili.io/KUvDvAN.gif');
+        return;
+      }
+    }
+    // timer win handling
+    if(level5Active){
+      let elapsed = Math.floor((Date.now() - level5Start)/1000);
+      let remain = Math.max(0, level5Timer - elapsed);
+      timerText.textContent = `Time: ${remain}s`;
+      if(remain <= 0){
+        level5Active = false;
+        timerText.textContent = '';
+        endGameWin();
+        return;
+      }
+    }
+  } else {
+    if(m && !ghost){
+      let dx = p.x - m.x, dy = p.y - m.y, dist = Math.sqrt(dx*dx + dy*dy);
+      if(dist < (p.s + m.s)/2){
+        showJumpAndGameOver(m.jump || (level===2 ? 'https://iili.io/Kg9RRhG.webp' : 'https://iili.io/KUvDvAN.gif'));
+        return;
+      }
+    }
+  }
+
+  // collectables
+  for(let i=a.length-1;i>=0;i--){
+    let x=a[i], dx=p.x - (x.x || 0), dy=p.y - (x.y || 0);
+    // handling different storage for fruits: some store center or not; align checks
+    let cx = (x.x !== undefined) ? x.x : (x.x + x.s/2);
+    let cy = (x.y !== undefined) ? x.y : (x.y + x.s/2);
+    let dist = Math.sqrt((p.x - cx)*(p.x - cx) + (p.y - cy)*(p.y - cy));
+    let radius = (p.s + (x.s || 10))/2;
+    if(dist < radius){
+      a.splice(i,1); col++; updateInfo();
+      if(a.length===0 && level!==5){
+        endGameWin();
+        return;
+      }
+    }
+  }
+
+  requestAnimationFrame(loop);
+}
+
+/* flash effect */
+function drawFlash(){
+  let g = ctx.createRadialGradient(p.x+p.s/2, p.y+p.s/2, 10, p.x+p.s/2, p.y+p.s/2, 120);
+  g.addColorStop(0,'rgba(255,255,200,0.8)');
+  g.addColorStop(1,'rgba(0,0,0,0.9)');
+  ctx.fillStyle = g; ctx.fillRect(0,0,c.width,c.height);
+}
+
+/* init info */
+updateInfo();
+
+/* expose helpers for HTML buttons used in strings */
+window.startGame = startGame; window.restartGame = restartGame; window.goHome = goHome; window.resumeGame = resumeGame;
+
+</script>
+</body>
+</html>
